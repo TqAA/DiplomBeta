@@ -1,0 +1,99 @@
+
+WIFI ТОЧКА
+#include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
+#include <Wire.h>
+#include <MPU6050.h>
+
+MPU6050 mpu;
+WiFiUDP udp;
+
+// создаём Wi-Fi сеть
+const char* ssid = "DRONE_IMU";
+const char* password = "12345678";
+
+IPAddress pcIP(192,168,4,2); // ПК получит этот IP
+const int port = 4210;
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(D2, D1);
+
+  mpu.initialize();
+
+  WiFi.softAP(ssid, password);
+
+  Serial.println("AP started");
+  Serial.println(WiFi.softAPIP()); // обычно 192.168.4.1
+
+  udp.begin(port);
+}
+
+void loop() {
+  int16_t ax, ay, az, gx, gy, gz;
+  mpu.getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
+
+  char buffer[64];
+  sprintf(buffer,"%d,%d,%d,%d,%d,%d", ax, ay, az, gx, gy, gz);
+
+  udp.beginPacket(pcIP, port);
+  udp.write(buffer);
+  udp.endPacket();
+
+  delay(20);
+}
+
+
+
+
+РОУТЕР
+
+#include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
+#include <Wire.h>
+#include <MPU6050.h>
+
+MPU6050 mpu;
+WiFiUDP udp;
+
+// ВАЖНО: впиши свои данные
+const char* ssid = "YOUR_WIFI";
+const char* password = "YOUR_PASS";
+
+// IP твоего ПК (узнаешь через ipconfig)
+IPAddress pcIP(192,168,1,100);
+const int port = 4210;
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(D2, D1);
+
+  mpu.initialize();
+
+  WiFi.begin(ssid, password);
+
+  Serial.print("Connecting...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nConnected!");
+  Serial.println(WiFi.localIP());
+
+  udp.begin(port);
+}
+
+void loop() {
+  int16_t ax, ay, az, gx, gy, gz;
+  mpu.getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
+
+  char buffer[64];
+  sprintf(buffer,"%d,%d,%d,%d,%d,%d", ax, ay, az, gx, gy, gz);
+
+  udp.beginPacket(pcIP, port);
+  udp.write(buffer);
+  udp.endPacket();
+
+  delay(20); // ~50 Гц
+}
