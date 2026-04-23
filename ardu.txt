@@ -1,3 +1,10 @@
+Пакеты
+https://arduino.esp8266.com/stable/package_esp8266com_index.json
+Менеждер плат:
+Arduino AVR Board
+esp8266
+Библиотеки
+MPU6050
 
 WIFI ТОЧКА
 #include <ESP8266WiFi.h>
@@ -56,13 +63,13 @@ void loop() {
 MPU6050 mpu;
 WiFiUDP udp;
 
-// ВАЖНО: впиши свои данные
-const char* ssid = "YOUR_WIFI";
-const char* password = "YOUR_PASS";
 
-// IP твоего ПК (узнаешь через ipconfig)
-IPAddress pcIP(192,168,1,100);
-const int port = 4210;
+const char* ssid = "TP-Link_4C1A";
+const char* password = "pass";
+
+// IP  ПК
+IPAddress pcIP(192,168,0,104);
+const int port = 5010;
 
 void setup() {
   Serial.begin(115200);
@@ -86,14 +93,17 @@ void setup() {
 
 void loop() {
   int16_t ax, ay, az, gx, gy, gz;
-  mpu.getMotion6(&ax,&ay,&az,&gx,&gy,&gz);
+
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 
   char buffer[64];
-  sprintf(buffer,"%d,%d,%d,%d,%d,%d", ax, ay, az, gx, gy, gz);
+  sprintf(buffer, "%d,%d,%d,%d,%d,%d", ax, ay, az, gx, gy, gz);
 
   udp.beginPacket(pcIP, port);
   udp.write(buffer);
   udp.endPacket();
 
-  delay(20); // ~50 Гц
+  Serial.println(buffer);  // DEBUG
+
+  delay(20);
 }
