@@ -1,7 +1,7 @@
 import cv2
 import serial
 import time
-from pyzbar import pyzbar
+
 
 from rec import IMUReceiver
 from control import Stabilizer
@@ -26,6 +26,7 @@ except:
 imu        = IMUReceiver()
 stabilizer = Stabilizer()
 cap        = cv2.VideoCapture(0)
+qr_detector = cv2.QRCodeDetector()
 
 
 # =========================
@@ -70,22 +71,17 @@ start_time = time.time()
 # Helpers
 # =========================
 def decode_qr(frame):
-    """Декодирует QR через pyzbar. Возвращает (cx, cy, pts) или None."""
-    gray    = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    codes   = pyzbar.decode(gray)
+    """Декодирует QR через cv2. Возвращает (cx, cy, pts) или None."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    data, bbox, _ = qr_detector.detectAndDecode(gray)
 
-    if not codes:
+    if bbox is None:
         return None
 
-    # берём первый найденный QR
-    code = codes[0]
-    pts  = [(p.x, p.y) for p in code.polygon]
+    pts = [(int(p[0]), int(p[1])) for p in bbox.reshape(4, 2)]
 
-    if len(pts) < 4:
-        return None
-
-    cx = int(sum(p[0] for p in pts) / len(pts))
-    cy = int(sum(p[1] for p in pts) / len(pts))
+    cx = int(sum(p[0] for p in pts) / 4)
+    cy = int(sum(p[1] for p in pts) / 4)
     return cx, cy, pts
 
 
