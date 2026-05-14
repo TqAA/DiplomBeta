@@ -23,9 +23,9 @@ except:
 # =========================
 # Modules
 # =========================
-imu        = IMUReceiver()
-stabilizer = Stabilizer()
-cap        = cv2.VideoCapture(0)
+imu         = IMUReceiver()
+stabilizer  = Stabilizer()
+cap         = cv2.VideoCapture(0)
 qr_detector = cv2.QRCodeDetector()
 
 
@@ -48,6 +48,8 @@ YAW_THROTTLE_COMP  = 0.3           # компенсация газа при yaw-
 
 TILT_THROTTLE_COMP = 0.3
 
+QR_REDETECT_INTERVAL = 30          # переинициализировать трекер каждые N кадров
+
 
 # =========================
 # State
@@ -57,9 +59,14 @@ target_dx   = 0.0
 target_dy   = 0.0
 
 # Last known position
-last_qr_side       = "right"   # "left" / "right" — куда уходил QR
-last_qr_seen_time  = 0.0
-qr_ever_seen       = False
+last_qr_side      = "right"        # "left" / "right" — куда уходил QR
+last_qr_seen_time = 0.0
+qr_ever_seen      = False
+
+# Tracker
+tracker        = None
+tracker_active = False
+frame_counter  = 0
 
 # Yaw
 yaw_cmd = YAW_NEUTRAL
@@ -80,9 +87,23 @@ def decode_qr(frame):
 
     pts = [(int(p[0]), int(p[1])) for p in bbox.reshape(4, 2)]
 
+    if len(pts) < 4:
+        return None
+
     cx = int(sum(p[0] for p in pts) / 4)
     cy = int(sum(p[1] for p in pts) / 4)
     return cx, cy, pts
+
+
+def init_tracker(frame, pts):
+    """Инициализирует CSRT трекер по точкам QR."""
+    x_t = min(p[0] for p in pts)
+    y_t = min(p[1] for p in pts)
+    w_t = max(p[0] for p in pts) - x_t
+    h_t = max(p[1] for p in pts) - y_t
+    t = cv2.TrackerCSRT_create()
+    t.init(frame, (x_t, y_t, w_t, h_t))
+    return t
 
 
 def draw_qr(frame, cx, cy, pts, center_x, center_y):
@@ -108,10 +129,10 @@ def get_yaw_cmd(qr_detected, qr_ever_seen, last_qr_seen_time, last_qr_side):
         return YAW_NEUTRAL
 
     time_since_qr = time.time() - last_qr_seen_time
-    searching      = not qr_ever_seen or time_since_qr > QR_LOSS_TIMEOUT
+    searching     = not qr_ever_seen or time_since_qr > QR_LOSS_TIMEOUT
 
     if searching:
-        direction = 1   # вправо по умолчанию
+        direction = 1                                        # вправо по умолчанию
     else:
         direction = 1 if last_qr_side == "right" else -1
 
@@ -122,7 +143,7 @@ def calc_throttle(elapsed, imu_roll, imu_pitch, yaw_cmd, qr_detected, target_dy)
     """Считает throttle с учётом ramp, tilt и yaw компенсации."""
     # Ramp
     if elapsed < RAMP_DURATION:
-        t = elapsed / RAMP_DURATION
+        t    = elapsed / RAMP_DURATION
         base = int(RAMP_START + t * (RAMP_END - RAMP_START))
     else:
         base = BASE_THROTTLE
@@ -135,9 +156,9 @@ def calc_throttle(elapsed, imu_roll, imu_pitch, yaw_cmd, qr_detected, target_dy)
     yaw_offset = abs(yaw_cmd - YAW_NEUTRAL)
     throttle  += int(yaw_offset * YAW_THROTTLE_COMP)
 
-    # QR vertical correction
-    if qr_detected and abs(target_dy) > 20:
-        throttle += int(target_dy * 0.3)
+    # QR vertical correction (target_dy нормирован: -1.0 до 1.0)
+    if qr_detected and abs(target_dy) > 0.06:
+        throttle += int(target_dy * 96)                     # 0.3 * 320 = 96
 
     return max(1000, min(1700, throttle))
 
@@ -159,12 +180,36 @@ while True:
         center_x = frame.shape[1] // 2
         center_y = frame.shape[0] // 2
 
-        result = decode_qr(frame)
+        frame_counter += 1
+        qr_result = None
 
-        if result is not None:
-            qr_cx, qr_cy, pts = result
-            qr_detected = True
-            qr_ever_seen = True
+        # Пробуем трекер
+        if tracker_active:
+            success, bbox = tracker.update(frame)
+            if success:
+                x, y, w, h = [int(v) for v in bbox]
+                qr_cx = x + w // 2
+                qr_cy = y + h // 2
+                pts   = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+                qr_result = (qr_cx, qr_cy, pts)
+            else:
+                # трекер потерял объект
+                tracker_active = False
+                tracker        = None
+
+        # Если трекер не активен или пора переинициализировать — запускаем QR детектор
+        if not tracker_active or frame_counter % QR_REDETECT_INTERVAL == 0:
+            qr_result_fresh = decode_qr(frame)
+            if qr_result_fresh is not None:
+                qr_cx, qr_cy, pts = qr_result_fresh
+                tracker        = init_tracker(frame, pts)
+                tracker_active = True
+                qr_result      = qr_result_fresh
+
+        if qr_result is not None:
+            qr_cx, qr_cy, pts = qr_result
+            qr_detected       = True
+            qr_ever_seen      = True
             last_qr_seen_time = time.time()
 
             # Запоминаем сторону — куда смещён QR от центра
@@ -215,7 +260,8 @@ while True:
     if not imu.is_alive():
         roll_cmd  = 1500
         pitch_cmd = 1500
-        throttle  = 1000
+        throttle  = 1350
+        yaw_cmd = 1500
         print("FAILSAFE: IMU dead")
 
     # --- Send ---
